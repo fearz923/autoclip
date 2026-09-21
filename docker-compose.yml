@@ -20,13 +20,11 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    # 四个服务共用同一个镜像；统一 image 名后只需 build 一次
     image: autoclip:local
     container_name: autoclip-app
     restart: unless-stopped
     ports:
-      - "8000:8000"  # 后端API
-      - "3000:3000"  # 前端界面
+      - "8000:8000"
     volumes:
       - ./data:/app/data
       - ./logs:/app/logs
@@ -37,8 +35,6 @@ services:
       - ENVIRONMENT=production
       - DEBUG=false
       - LOG_LEVEL=INFO
-      # LLM 配置从宿主机 .env / shell 透传（compose 会自动读项目根目录的 .env 做变量替换）。
-      # 没有这一段时 DOCKER.md 里让用户填的 API_DASHSCOPE_API_KEY 根本进不了容器。
       - LLM_PROVIDER=${LLM_PROVIDER:-dashscope}
       - API_MODEL_NAME=${API_MODEL_NAME:-qwen-plus}
       - API_DASHSCOPE_API_KEY=${API_DASHSCOPE_API_KEY:-}
@@ -56,6 +52,37 @@ services:
       timeout: 10s
       retries: 3
       start_period: 40s
+
+  # Serve the production frontend and proxy API requests to FastAPI.
+  frontend:
+    image: nginx:1.27-alpine
+    container_name: autoclip-frontend
+    restart: unless-stopped
+    ports:
+      - "3000:80"
+    volumes:
+      - ./docker/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - frontend_dist:/usr/share/nginx/html
+    depends_on:
+      autoclip:
+        condition: service_healthy
+    command: >
+      /bin/sh -c "rm -rf /usr/share/nginx/html/* &&
+      cp -a /frontend-dist/. /usr/share/nginx/html/ &&
+      nginx -g 'daemon off;'"
+
+  # Populate the shared frontend volume from the application image built above.
+  frontend-assets:
+    image: autoclip:local
+    container_name: autoclip-frontend-assets
+    restart: "no"
+    volumes:
+      - frontend_dist:/frontend-dist
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["rm -rf /frontend-dist/* && cp -a /app/frontend/dist/. /frontend-dist/"]
+    depends_on:
+      autoclip:
+        condition: service_started
 
   # Celery Worker服务
   celery-worker:
@@ -75,8 +102,6 @@ services:
       - ENVIRONMENT=production
       - DEBUG=false
       - LOG_LEVEL=INFO
-      # LLM 配置从宿主机 .env / shell 透传（compose 会自动读项目根目录的 .env 做变量替换）。
-      # 没有这一段时 DOCKER.md 里让用户填的 API_DASHSCOPE_API_KEY 根本进不了容器。
       - LLM_PROVIDER=${LLM_PROVIDER:-dashscope}
       - API_MODEL_NAME=${API_MODEL_NAME:-qwen-plus}
       - API_DASHSCOPE_API_KEY=${API_DASHSCOPE_API_KEY:-}
@@ -85,8 +110,6 @@ services:
       - API_GEMINI_API_KEY=${API_GEMINI_API_KEY:-}
       - API_SILICONFLOW_API_KEY=${API_SILICONFLOW_API_KEY:-}
       - AUTOCLIP_YT_SUBTITLE_LANGS=${AUTOCLIP_YT_SUBTITLE_LANGS:-}
-    # 任务通过 celery_app.task_routes 被路由到专用队列；不带 -Q 的 worker 只消费默认的
-    # `celery` 队列，流水线任务会一直堆在 `processing` 里没人执行，项目永远卡在处理中。
     command: celery -A backend.core.celery_app worker --loglevel=info --concurrency=2 -Q celery,processing,video,notification,upload
     depends_on:
       redis:
@@ -94,7 +117,6 @@ services:
       autoclip:
         condition: service_healthy
 
-  # Celery Beat调度器
   celery-beat:
     build:
       context: .
@@ -118,7 +140,6 @@ services:
       autoclip:
         condition: service_healthy
 
-  # Flower监控服务（可选）
   flower:
     build:
       context: .
@@ -142,6 +163,7 @@ services:
 volumes:
   redis_data:
     driver: local
+  frontend_dist:
 
 networks:
   default:
