@@ -74,10 +74,11 @@ services:
     image: autoclip:local
     container_name: autoclip-frontend-assets
     restart: "no"
+    user: "0:0"
     volumes:
       - frontend_dist:/frontend-dist
     entrypoint: ["/bin/sh", "-c"]
-    command: ["rm -rf /frontend-dist/* && cp -a /app/frontend/dist/. /frontend-dist/"]
+    command: ["rm -rf /frontend-dist/* && cp -a /app/frontend/dist/. /frontend-dist/ && chmod -R a+rX /frontend-dist"]
     depends_on:
       autoclip:
         condition: service_started
