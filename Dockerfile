@@ -48,7 +48,10 @@ RUN apt-get update && apt-get install -y \
 COPY requirements.txt ./
 
 # 安装Python依赖
-RUN pip install --no-cache-dir -r requirements.txt
+# Install core backend dependencies plus local speech-to-text for Docker.
+# Desktop keeps Whisper optional, but Docker needs it for uploaded videos without SRT files.
+RUN pip install --no-cache-dir -r requirements.txt \
+    && pip install --no-cache-dir faster-whisper
 
 # 第三阶段：最终镜像
 FROM python:3.11-slim
